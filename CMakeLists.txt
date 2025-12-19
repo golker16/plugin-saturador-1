@@ -50,6 +50,9 @@ juce_add_plugin(PluginSaturador1
   COPY_PLUGIN_AFTER_BUILD FALSE
 )
 
+# Genera JuceHeader.h para que #include <JuceHeader.h> funcione
+juce_generate_juce_header(PluginSaturador1)
+
 target_sources(PluginSaturador1 PRIVATE
   PluginProcessor.cpp
   PluginProcessor.h
