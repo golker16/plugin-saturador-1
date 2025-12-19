@@ -178,3 +178,10 @@ void YourPluginAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, j
         if (ch1 != nullptr) ch1[i] = outR;
     }
 }
+
+//==============================================================================
+// This creates new instances of the plugin.
+juce::AudioProcessor* JUCE_CALLTYPE createPluginFilter()
+{
+    return new YourPluginAudioProcessor();
+}
