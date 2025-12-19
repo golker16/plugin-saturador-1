@@ -18,47 +18,9 @@ FetchContent_Declare(
 FetchContent_MakeAvailable(juce)
 
 # -----------------------------
-# Fetch VST3 SDK (public)
-# -----------------------------
-FetchContent_Declare(
-  vst3sdk
-  GIT_REPOSITORY https://github.com/steinbergmedia/vst3_public_sdk.git
-  GIT_TAG master
-)
-FetchContent_MakeAvailable(vst3sdk)
-
-# -----------------------------
-# Find correct VST3 SDK include root for JUCE
-# JUCE expects to be able to include:
-#   <pluginterfaces/base/fplatform.h>
-# So the SDK path must be the directory that CONTAINS the "pluginterfaces" folder.
-# This searches robustly regardless of repo layout.
-# -----------------------------
-file(GLOB_RECURSE VST3_FPLATFORM
-     "${vst3sdk_SOURCE_DIR}/*/pluginterfaces/base/fplatform.h"
-     "${vst3sdk_SOURCE_DIR}/pluginterfaces/base/fplatform.h")
-
-if (NOT VST3_FPLATFORM)
-  message(FATAL_ERROR
-    "VST3 SDK not found: could not locate pluginterfaces/base/fplatform.h inside ${vst3sdk_SOURCE_DIR}.")
-endif()
-
-list(GET VST3_FPLATFORM 0 VST3_FPLATFORM_FILE)
-
-# fplatform.h -> .../pluginterfaces/base
-get_filename_component(_vst3_base_dir "${VST3_FPLATFORM_FILE}" DIRECTORY)
-# .../pluginterfaces
-get_filename_component(_vst3_pluginterfaces_dir "${_vst3_base_dir}" DIRECTORY)
-# parent of pluginterfaces (THIS is the include root)
-get_filename_component(VST3_SDK_PATH "${_vst3_pluginterfaces_dir}" DIRECTORY)
-
-message(STATUS "Found fplatform.h at: ${VST3_FPLATFORM_FILE}")
-message(STATUS "Using VST3 SDK path for JUCE: ${VST3_SDK_PATH}")
-
-juce_set_vst3_sdk_path("${VST3_SDK_PATH}")
-
-# -----------------------------
-# Plugin Target (VST3 only)
+# Plugin Target (VST3)
+# JUCE ya incluye headers del VST3 SDK internamente.
+# NO seteamos un SDK externo para evitar problemas de submodules.
 # -----------------------------
 juce_add_plugin(PluginSaturador1
   COMPANY_NAME "golk"
@@ -90,6 +52,9 @@ target_sources(PluginSaturador1 PRIVATE
 target_compile_definitions(PluginSaturador1 PRIVATE
   JUCE_WEB_BROWSER=0
   JUCE_USE_CURL=0
+
+  # Importante: evita que JUCE intente headers de VST2
+  JUCE_VST3_CAN_REPLACE_VST2=0
 )
 
 target_link_libraries(PluginSaturador1 PRIVATE
