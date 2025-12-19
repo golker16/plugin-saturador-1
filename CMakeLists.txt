@@ -28,21 +28,37 @@ FetchContent_Declare(
 FetchContent_MakeAvailable(vst3sdk)
 
 # -----------------------------
-# JUCE needs correct VST3 SDK path
-# The public SDK repo usually has headers under: <root>/vst3sdk/pluginterfaces/...
-# JUCE expects includes like: <pluginterfaces/base/fplatform.h>
-# So the include root must be the folder that CONTAINS "pluginterfaces".
+# Find correct VST3 SDK include root for JUCE
+# JUCE expects to be able to include:
+#   <pluginterfaces/base/fplatform.h>
+# So the SDK path must be the directory that CONTAINS the "pluginterfaces" folder.
+# This searches robustly regardless of repo layout.
 # -----------------------------
-set(VST3_SDK_PATH "${vst3sdk_SOURCE_DIR}")
-if (EXISTS "${vst3sdk_SOURCE_DIR}/vst3sdk/pluginterfaces/base/fplatform.h")
-  set(VST3_SDK_PATH "${vst3sdk_SOURCE_DIR}/vst3sdk")
+file(GLOB_RECURSE VST3_FPLATFORM
+     "${vst3sdk_SOURCE_DIR}/*/pluginterfaces/base/fplatform.h"
+     "${vst3sdk_SOURCE_DIR}/pluginterfaces/base/fplatform.h")
+
+if (NOT VST3_FPLATFORM)
+  message(FATAL_ERROR
+    "VST3 SDK not found: could not locate pluginterfaces/base/fplatform.h inside ${vst3sdk_SOURCE_DIR}.")
 endif()
 
-message(STATUS "Using VST3 SDK path: ${VST3_SDK_PATH}")
-juce_set_vst3_sdk_path(${VST3_SDK_PATH})
+list(GET VST3_FPLATFORM 0 VST3_FPLATFORM_FILE)
+
+# fplatform.h -> .../pluginterfaces/base
+get_filename_component(_vst3_base_dir "${VST3_FPLATFORM_FILE}" DIRECTORY)
+# .../pluginterfaces
+get_filename_component(_vst3_pluginterfaces_dir "${_vst3_base_dir}" DIRECTORY)
+# parent of pluginterfaces (THIS is the include root)
+get_filename_component(VST3_SDK_PATH "${_vst3_pluginterfaces_dir}" DIRECTORY)
+
+message(STATUS "Found fplatform.h at: ${VST3_FPLATFORM_FILE}")
+message(STATUS "Using VST3 SDK path for JUCE: ${VST3_SDK_PATH}")
+
+juce_set_vst3_sdk_path("${VST3_SDK_PATH}")
 
 # -----------------------------
-# Plugin Target
+# Plugin Target (VST3 only)
 # -----------------------------
 juce_add_plugin(PluginSaturador1
   COMPANY_NAME "golk"
@@ -86,3 +102,4 @@ target_link_libraries(PluginSaturador1 PRIVATE
   juce::juce_recommended_warning_flags
   juce::juce_recommended_lto_flags
 )
+
