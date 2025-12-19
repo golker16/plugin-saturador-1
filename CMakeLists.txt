@@ -27,8 +27,19 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(vst3sdk)
 
-# JUCE necesita saber dónde está el SDK para habilitar VST3
-juce_set_vst3_sdk_path(${vst3sdk_SOURCE_DIR})
+# -----------------------------
+# JUCE needs correct VST3 SDK path
+# The public SDK repo usually has headers under: <root>/vst3sdk/pluginterfaces/...
+# JUCE expects includes like: <pluginterfaces/base/fplatform.h>
+# So the include root must be the folder that CONTAINS "pluginterfaces".
+# -----------------------------
+set(VST3_SDK_PATH "${vst3sdk_SOURCE_DIR}")
+if (EXISTS "${vst3sdk_SOURCE_DIR}/vst3sdk/pluginterfaces/base/fplatform.h")
+  set(VST3_SDK_PATH "${vst3sdk_SOURCE_DIR}/vst3sdk")
+endif()
+
+message(STATUS "Using VST3 SDK path: ${VST3_SDK_PATH}")
+juce_set_vst3_sdk_path(${VST3_SDK_PATH})
 
 # -----------------------------
 # Plugin Target
