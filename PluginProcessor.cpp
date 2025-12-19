@@ -1,3 +1,4 @@
+// PluginProcessor.cpp
 #include "PluginProcessor.h"
 
 static juce::AudioProcessorValueTreeState::ParameterLayout makeLayout()
@@ -17,11 +18,60 @@ static juce::AudioProcessorValueTreeState::ParameterLayout makeLayout()
 }
 
 YourPluginAudioProcessor::YourPluginAudioProcessor()
-: apvts (*this, nullptr, "PARAMS", makeLayout())
+: juce::AudioProcessor (BusesProperties()
+                        .withInput  ("Input",  juce::AudioChannelSet::stereo(), true)
+                        .withOutput ("Output", juce::AudioChannelSet::stereo(), true)),
+  apvts (*this, nullptr, "PARAMS", makeLayout())
 {
     pDrive = apvts.getRawParameterValue ("drive");
     pTone  = apvts.getRawParameterValue ("tone");
     pMix   = apvts.getRawParameterValue ("mix");
+}
+
+const juce::String YourPluginAudioProcessor::getName() const
+{
+    return "Plugin Saturador 1";
+}
+
+bool YourPluginAudioProcessor::acceptsMidi() const  { return false; }
+bool YourPluginAudioProcessor::producesMidi() const { return false; }
+bool YourPluginAudioProcessor::isMidiEffect() const { return false; }
+
+double YourPluginAudioProcessor::getTailLengthSeconds() const
+{
+    return 0.0;
+}
+
+int YourPluginAudioProcessor::getNumPrograms() { return 1; }
+int YourPluginAudioProcessor::getCurrentProgram() { return 0; }
+void YourPluginAudioProcessor::setCurrentProgram (int) {}
+const juce::String YourPluginAudioProcessor::getProgramName (int) { return {}; }
+void YourPluginAudioProcessor::changeProgramName (int, const juce::String&) {}
+
+bool YourPluginAudioProcessor::hasEditor() const
+{
+    return true;
+}
+
+juce::AudioProcessorEditor* YourPluginAudioProcessor::createEditor()
+{
+    // Editor genérico (te muestra tus 3 knobs automáticamente)
+    return new juce::GenericAudioProcessorEditor (*this);
+}
+
+bool YourPluginAudioProcessor::isBusesLayoutSupported (const BusesLayout& layouts) const
+{
+    // Acepta mono o estéreo, y que input=output
+    const auto& in  = layouts.getMainInputChannelSet();
+    const auto& out = layouts.getMainOutputChannelSet();
+
+    if (in.isDisabled() || out.isDisabled())
+        return false;
+
+    if (in != out)
+        return false;
+
+    return (in == juce::AudioChannelSet::mono() || in == juce::AudioChannelSet::stereo());
 }
 
 void YourPluginAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
@@ -37,12 +87,7 @@ void YourPluginAudioProcessor::prepareToPlay (double sampleRate, int samplesPerB
     toneSm .setCurrentAndTargetValue (*pTone);
     mixSm  .setCurrentAndTargetValue (*pMix);
 
-    // Tilt EQ init
-    juce::dsp::ProcessSpec spec;
-    spec.sampleRate = sr;
-    spec.maximumBlockSize = (juce::uint32) samplesPerBlock;
-    spec.numChannels = 1;
-
+    // Reset filtros
     lowShelfL.reset(); lowShelfR.reset();
     highShelfL.reset(); highShelfR.reset();
 
@@ -51,20 +96,20 @@ void YourPluginAudioProcessor::prepareToPlay (double sampleRate, int samplesPerB
 
     sat.reset();
 
-    // Level matcher
+    // Level matcher (auto level-match siempre ON)
     levelMatch.prepare (sr);
     levelMatch.setGateDb (-60.0f);
     levelMatch.setClampDb (-12.0f, +12.0f);
     levelMatch.setMeasurementWindowMs (300.0f);
     levelMatch.setGainSmoothingMs (120.0f, 600.0f);
+
+    (void) samplesPerBlock;
 }
 
 float YourPluginAudioProcessor::mapDriveDb (float drive01)
 {
-    // Curva musical: 0..1 -> 0..+30 dB con más resolución al inicio
-    // (pow < 1 expande el rango bajo)
     const float shaped = std::pow (juce::jlimit (0.0f, 1.0f, drive01), 0.65f);
-    return 30.0f * shaped;
+    return 30.0f * shaped; // 0..+30 dB
 }
 
 float YourPluginAudioProcessor::equalPowerMix (float dry, float wet, float mix01)
@@ -106,8 +151,7 @@ void YourPluginAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, j
     toneSm .setTargetValue (*pTone);
     mixSm  .setTargetValue (*pMix);
 
-    // Si tone cambia, actualizamos coef (con smoothing)
-    // (Actualizamos cada bloque: suficiente para MVP)
+    // Actualiza coef por bloque
     updateTiltCoeffs (toneSm.getTargetValue());
 
     auto* ch0 = buffer.getWritePointer (0);
@@ -119,7 +163,6 @@ void YourPluginAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, j
         const float tone01  = toneSm.getNextValue();
         const float mix01   = mixSm.getNextValue();
 
-        // (Si quieres ultra-suave, podrías recalcular tilt a menor tasa; por ahora bloque OK)
         (void) tone01;
 
         const float driveDb  = mapDriveDb (drive01);
@@ -134,9 +177,8 @@ void YourPluginAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, j
 
         float wetL = sat.process (xL);
 
-        // Sin knob extra: micro “soften” dependiente de drive (muy leve)
-        // (Evita fizz si empujas fuerte)
-        const float soften = 1.0f / (1.0f + 0.12f * driveDb); // simple
+        // micro soften dependiente de drive
+        const float soften = 1.0f / (1.0f + 0.12f * driveDb);
         wetL *= (0.9f + 0.1f * soften);
 
         float mixedL = equalPowerMix (dryL, wetL, mix01);
@@ -159,9 +201,7 @@ void YourPluginAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, j
             mixedR = equalPowerMix (dryR, wetR, mix01);
         }
 
-        // Level match basado en señal MIXED (para que Mix no cambie volumen)
-        // Referencia: DRY (entrada)
-        // Para estéreo: promediamos la medición para un gain común y coherente
+        // Auto level match sobre la señal MIXED (para que Mix no cambie volumen)
         const float dryAvg   = 0.5f * (dryL   + dryR);
         const float mixedAvg = 0.5f * (mixedL + mixedR);
 
@@ -179,9 +219,27 @@ void YourPluginAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, j
     }
 }
 
+void YourPluginAudioProcessor::getStateInformation (juce::MemoryBlock& destData)
+{
+    // Guarda parámetros (APVTS)
+    auto state = apvts.copyState();
+    std::unique_ptr<juce::XmlElement> xml (state.createXml());
+    copyXmlToBinary (*xml, destData);
+}
+
+void YourPluginAudioProcessor::setStateInformation (const void* data, int sizeInBytes)
+{
+    std::unique_ptr<juce::XmlElement> xmlState (getXmlFromBinary (data, sizeInBytes));
+
+    if (xmlState != nullptr)
+        if (xmlState->hasTagName (apvts.state.getType()))
+            apvts.replaceState (juce::ValueTree::fromXml (*xmlState));
+}
+
 //==============================================================================
 // This creates new instances of the plugin.
 juce::AudioProcessor* JUCE_CALLTYPE createPluginFilter()
 {
     return new YourPluginAudioProcessor();
 }
+
