@@ -1,42 +1,28 @@
-# .github/workflows/build.yml
 name: build-vst3
 
 on:
   push:
   pull_request:
-  release:
-    types: [published]
   workflow_dispatch:
-
-concurrency:
-  group: build-vst3-${{ github.ref }}
-  cancel-in-progress: true
 
 jobs:
   build:
-    name: ${{ matrix.os }}-${{ matrix.config }}
     strategy:
       fail-fast: false
       matrix:
         os: [windows-latest, macos-latest, ubuntu-latest]
-        config: [Release] # puedes agregar Debug si quieres
+        config: [Release]
 
     runs-on: ${{ matrix.os }}
 
     env:
       BUILD_DIR: build
-      DIST_DIR: dist
-      CMAKE_BUILD_TYPE: ${{ matrix.config }}
 
     steps:
-      - name: Checkout (with submodules)
+      - name: Checkout
         uses: actions/checkout@v4
-        with:
-          submodules: recursive
-          fetch-depth: 0
 
-      # ---- Dependencies (Linux) ----
-      - name: Install Linux dependencies (JUCE GUI + VST3)
+      - name: Install Linux deps (JUCE)
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
@@ -47,98 +33,55 @@ jobs:
             libfreetype6-dev libfontconfig1-dev \
             libgl1-mesa-dev
 
-      # ---- Tooling (Windows) ----
       - name: Setup MSVC (Windows)
         if: runner.os == 'Windows'
         uses: ilammy/msvc-dev-cmd@v1
 
-      # ---- CMake cache (optional but recommended) ----
-      - name: Cache build folder
+      - name: Cache build (incluye _deps de FetchContent)
         uses: actions/cache@v4
         with:
-          path: |
-            ${{ env.BUILD_DIR }}
-          key: ${{ runner.os }}-${{ matrix.config }}-${{ hashFiles('**/CMakeLists.txt', '**/*.cmake', '**/JUCE/**') }}
+          path: ${{ env.BUILD_DIR }}
+          key: ${{ runner.os }}-${{ matrix.config }}-${{ hashFiles('CMakeLists.txt') }}
           restore-keys: |
             ${{ runner.os }}-${{ matrix.config }}-
 
-      # ---- Configure ----
-      - name: Configure (CMake)
+      - name: Configure
         run: >
           cmake -S . -B ${{ env.BUILD_DIR }}
-          -DCMAKE_BUILD_TYPE=${{ env.CMAKE_BUILD_TYPE }}
+          -DCMAKE_BUILD_TYPE=${{ matrix.config }}
 
-      # ---- Build ----
       - name: Build
         run: >
           cmake --build ${{ env.BUILD_DIR }}
-          --config ${{ env.CMAKE_BUILD_TYPE }}
+          --config ${{ matrix.config }}
           --parallel
 
-      # ---- Package VST3 artifacts ----
-      # Nota: VST3 suele ser un "bundle" (carpeta) .vst3 en macOS y una carpeta .vst3 en Win/Linux (según framework).
-      - name: Collect .vst3 bundles
+      - name: Collect VST3
         shell: bash
         run: |
           set -euxo pipefail
-          mkdir -p "${DIST_DIR}"
+          mkdir -p dist
+          find "${BUILD_DIR}" -maxdepth 10 -name "*.vst3" -print -exec cp -R {} dist/ \; || true
+          ls -la dist
+          test "$(ls -A dist | wc -l)" -gt 0
 
-          # Busca cualquier .vst3 generado
-          # Ajusta maxdepth si tu estructura es distinta
-          mapfile -t VST3S < <(find "${BUILD_DIR}" -maxdepth 8 -name "*.vst3" -print || true)
-
-          if [ ${#VST3S[@]} -eq 0 ]; then
-            echo "No .vst3 found under ${BUILD_DIR}. Check your build output paths."
-            exit 1
-          fi
-
-          for p in "${VST3S[@]}"; do
-            echo "Found: $p"
-            cp -R "$p" "${DIST_DIR}/"
-          done
-
-          ls -la "${DIST_DIR}"
-
-      # Zip en Windows (mejor compat), tar.gz en mac/Linux
-      - name: Create archive (Windows)
+      - name: Package (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          New-Item -ItemType Directory -Force -Path $env:DIST_DIR | Out-Null
-          $zip = "vst3-${{ runner.os }}-${{ matrix.config }}.zip"
-          if (Test-Path $zip) { Remove-Item $zip -Force }
-          Compress-Archive -Path "$env:DIST_DIR\*.vst3" -DestinationPath $zip
-          echo "ARCHIVE=$zip" | Out-File -FilePath $env:GITHUB_ENV -Append
+          Compress-Archive -Path "dist\*.vst3" -DestinationPath "vst3-${{ runner.os }}.zip"
 
-      - name: Create archive (macOS/Linux)
+      - name: Package (macOS/Linux)
         if: runner.os != 'Windows'
         shell: bash
         run: |
-          set -euxo pipefail
-          archive="vst3-${{ runner.os }}-${{ matrix.config }}.tar.gz"
-          tar -C "${DIST_DIR}" -czf "${archive}" ./*.vst3
-          echo "ARCHIVE=${archive}" >> "$GITHUB_ENV"
+          tar -C dist -czf "vst3-${{ runner.os }}.tar.gz" ./*.vst3
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: vst3-${{ runner.os }}-${{ matrix.config }}
-          path: ${{ env.ARCHIVE }}
-          if-no-files-found: error
+          path: |
+            vst3-${{ runner.os }}.zip
+            vst3-${{ runner.os }}.tar.gz
 
-  # (Opcional) Adjuntar a Releases automáticamente cuando publicas un release
-  release-assets:
-    if: github.event_name == 'release'
-    needs: [build]
-    runs-on: ubuntu-latest
-    steps:
-      - name: Download all artifacts
-        uses: actions/download-artifact@v4
-        with:
-          path: artifacts
-
-      - name: Upload to GitHub Release
-        uses: softprops/action-gh-release@v2
-        with:
-          files: |
-            artifacts/**/*
