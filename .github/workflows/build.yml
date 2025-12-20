@@ -1,9 +1,14 @@
+# .github/workflows/build.yml
 name: build-vst3-windows
 
 on:
   push:
   pull_request:
   workflow_dispatch:
+
+concurrency:
+  group: build-vst3-windows-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   build:
@@ -35,16 +40,25 @@ jobs:
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path dist | Out-Null
-          $vst3 = Get-ChildItem -Path $env:BUILD_DIR -Recurse -Filter *.vst3 -ErrorAction SilentlyContinue
-          if (-not $vst3) { throw "No .vst3 found under $env:BUILD_DIR" }
-          foreach ($p in $vst3) { Copy-Item -Recurse -Force $p.FullName dist\ }
+
+          # En Windows un .vst3 es un directorio (bundle)
+          $vst3 = Get-ChildItem -Path $env:BUILD_DIR -Recurse -Filter *.vst3 -Directory -ErrorAction SilentlyContinue
+          if (-not $vst3) { throw "No .vst3 (directory bundle) found under $env:BUILD_DIR" }
+
+          foreach ($p in $vst3) {
+            $dest = Join-Path -Path "dist" -ChildPath $p.Name
+            if (Test-Path $dest) { Remove-Item -Recurse -Force $dest }
+            Copy-Item -Recurse -Force -Path $p.FullName -Destination $dest
+          }
+
+          Get-ChildItem dist -Force | Format-Table Name,FullName
 
       - name: Package
         shell: pwsh
         run: |
           $zip = "vst3-windows-${{ env.CONFIG }}.zip"
           if (Test-Path $zip) { Remove-Item $zip -Force }
-          Compress-Archive -Path "dist\*.vst3" -DestinationPath $zip
+          Compress-Archive -Path "dist\*" -DestinationPath $zip
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
