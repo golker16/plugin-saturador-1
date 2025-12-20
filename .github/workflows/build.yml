@@ -1,69 +1,54 @@
-# .github/workflows/build.yml
 name: build-vst3-windows
 
 on:
   push:
   pull_request:
-  workflow_dispatch:
-
-concurrency:
-  group: build-vst3-windows-${{ github.ref }}
-  cancel-in-progress: true
+  release:
+    types: [published]
 
 jobs:
   build:
     runs-on: windows-latest
 
-    env:
-      BUILD_DIR: build
-      CONFIG: Release
-
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup MSVC
-        uses: ilammy/msvc-dev-cmd@v1
-
       - name: Configure (CMake)
-        run: >
-          cmake -S . -B ${{ env.BUILD_DIR }}
-          -DCMAKE_BUILD_TYPE=${{ env.CONFIG }}
+        run: cmake -S . -B build -G "Visual Studio 17 2022" -A x64
 
-      - name: Build
-        run: >
-          cmake --build ${{ env.BUILD_DIR }}
-          --config ${{ env.CONFIG }}
-          --parallel
+      - name: Build (Release)
+        run: cmake --build build --config Release --parallel
 
-      - name: Collect .vst3
+      - name: Package VST3
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path dist | Out-Null
 
-          # En Windows un .vst3 es un directorio (bundle)
-          $vst3 = Get-ChildItem -Path $env:BUILD_DIR -Recurse -Filter *.vst3 -Directory -ErrorAction SilentlyContinue
-          if (-not $vst3) { throw "No .vst3 (directory bundle) found under $env:BUILD_DIR" }
+          # Solo directorios .vst3 (bundle)
+          $bundles = Get-ChildItem -Path build -Recurse -Directory -Filter *.vst3 |
+                     Where-Object { $_.FullName -match "\\VST3\\" }
 
-          foreach ($p in $vst3) {
-            $dest = Join-Path -Path "dist" -ChildPath $p.Name
-            if (Test-Path $dest) { Remove-Item -Recurse -Force $dest }
-            Copy-Item -Recurse -Force -Path $p.FullName -Destination $dest
+          if (-not $bundles) {
+            Write-Host "No .vst3 bundle directories found under build/**/VST3/"
+            Get-ChildItem -Path build -Recurse | Select-Object FullName
+            exit 1
           }
 
-          Get-ChildItem dist -Force | Format-Table Name,FullName
+          foreach ($b in $bundles) {
+            $dest = Join-Path dist $b.Name
+            if (Test-Path $dest) { Remove-Item -Recurse -Force $dest }
+            Copy-Item -Recurse -Force $b.FullName $dest
+          }
 
-      - name: Package
-        shell: pwsh
-        run: |
-          $zip = "vst3-windows-${{ env.CONFIG }}.zip"
-          if (Test-Path $zip) { Remove-Item $zip -Force }
-          Compress-Archive -Path "dist\*" -DestinationPath $zip
+          # Zip final
+          $zipPath = "dist\vst3-windows.zip"
+          if (Test-Path $zipPath) { Remove-Item -Force $zipPath }
+          Compress-Archive -Path "dist\*.vst3" -DestinationPath $zipPath -Force
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: vst3-windows-${{ env.CONFIG }}
-          path: vst3-windows-${{ env.CONFIG }}.zip
-          if-no-files-found: error
+          name: vst3-windows
+          path: dist/vst3-windows.zip
 
