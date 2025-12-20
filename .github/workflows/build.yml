@@ -1,4 +1,4 @@
-name: build-vst3
+name: build-vst3-windows
 
 on:
   push:
@@ -7,81 +7,49 @@ on:
 
 jobs:
   build:
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [windows-latest, macos-latest, ubuntu-latest]
-        config: [Release]
-
-    runs-on: ${{ matrix.os }}
+    runs-on: windows-latest
 
     env:
       BUILD_DIR: build
+      CONFIG: Release
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Install Linux deps (JUCE)
-        if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            build-essential cmake ninja-build pkg-config \
-            libasound2-dev \
-            libx11-dev libxcomposite-dev libxcursor-dev libxext-dev libxinerama-dev libxrandr-dev libxrender-dev \
-            libfreetype6-dev libfontconfig1-dev \
-            libgl1-mesa-dev
-
-      - name: Setup MSVC (Windows)
-        if: runner.os == 'Windows'
+      - name: Setup MSVC
         uses: ilammy/msvc-dev-cmd@v1
 
-      - name: Cache build (incluye _deps de FetchContent)
-        uses: actions/cache@v4
-        with:
-          path: ${{ env.BUILD_DIR }}
-          key: ${{ runner.os }}-${{ matrix.config }}-${{ hashFiles('CMakeLists.txt') }}
-          restore-keys: |
-            ${{ runner.os }}-${{ matrix.config }}-
-
-      - name: Configure
+      - name: Configure (CMake)
         run: >
           cmake -S . -B ${{ env.BUILD_DIR }}
-          -DCMAKE_BUILD_TYPE=${{ matrix.config }}
+          -DCMAKE_BUILD_TYPE=${{ env.CONFIG }}
 
       - name: Build
         run: >
           cmake --build ${{ env.BUILD_DIR }}
-          --config ${{ matrix.config }}
+          --config ${{ env.CONFIG }}
           --parallel
 
-      - name: Collect VST3
-        shell: bash
-        run: |
-          set -euxo pipefail
-          mkdir -p dist
-          find "${BUILD_DIR}" -maxdepth 10 -name "*.vst3" -print -exec cp -R {} dist/ \; || true
-          ls -la dist
-          test "$(ls -A dist | wc -l)" -gt 0
-
-      - name: Package (Windows)
-        if: runner.os == 'Windows'
+      - name: Collect .vst3
         shell: pwsh
         run: |
-          Compress-Archive -Path "dist\*.vst3" -DestinationPath "vst3-${{ runner.os }}.zip"
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          $vst3 = Get-ChildItem -Path $env:BUILD_DIR -Recurse -Filter *.vst3 -ErrorAction SilentlyContinue
+          if (-not $vst3) { throw "No .vst3 found under $env:BUILD_DIR" }
+          foreach ($p in $vst3) { Copy-Item -Recurse -Force $p.FullName dist\ }
 
-      - name: Package (macOS/Linux)
-        if: runner.os != 'Windows'
-        shell: bash
+      - name: Package
+        shell: pwsh
         run: |
-          tar -C dist -czf "vst3-${{ runner.os }}.tar.gz" ./*.vst3
+          $zip = "vst3-windows-${{ env.CONFIG }}.zip"
+          if (Test-Path $zip) { Remove-Item $zip -Force }
+          Compress-Archive -Path "dist\*.vst3" -DestinationPath $zip
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: vst3-${{ runner.os }}-${{ matrix.config }}
-          path: |
-            vst3-${{ runner.os }}.zip
-            vst3-${{ runner.os }}.tar.gz
+          name: vst3-windows-${{ env.CONFIG }}
+          path: vst3-windows-${{ env.CONFIG }}.zip
+          if-no-files-found: error
 
