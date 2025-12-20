@@ -18,19 +18,33 @@ FetchContent_Declare(
 FetchContent_MakeAvailable(juce)
 
 # -----------------------------
+# MSVC runtime estático (/MT)
+# Evita depender del Visual C++ Redistributable en la PC del usuario.
+# -----------------------------
+if (MSVC)
+  set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+endif()
+
+# -----------------------------
 # Plugin Target (VST3)
 # JUCE ya incluye headers del VST3 SDK internamente.
-# NO seteamos un SDK externo para evitar problemas de submodules.
 # -----------------------------
 juce_add_plugin(PluginSaturador1
   COMPANY_NAME "golk"
   PRODUCT_NAME "Plugin Saturador 1"
 
-  PLUGIN_MANUFACTURER_CODE GoLK
-  PLUGIN_CODE SaT1
+  # 4-char codes (mejor en mayúsculas)
+  PLUGIN_MANUFACTURER_CODE GOLK
+  PLUGIN_CODE SAT1
 
   FORMATS VST3
+
+  # Categorías explícitas (ayuda a algunos hosts)
+  VST3_CATEGORIES "Fx" "Distortion"
+
+  # (Si estabas usando esto para evitar problemas de hosts, lo dejamos)
   VST3_AUTO_MANIFEST FALSE
+
   IS_SYNTH FALSE
   IS_MIDI_EFFECT FALSE
   NEEDS_MIDI_INPUT FALSE
@@ -67,3 +81,4 @@ target_link_libraries(PluginSaturador1 PRIVATE
   juce::juce_recommended_warning_flags
   juce::juce_recommended_lto_flags
 )
+
