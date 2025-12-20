@@ -32,8 +32,9 @@ juce_add_plugin(PluginSaturador1
   COMPANY_NAME "golk"
   PRODUCT_NAME "Plugin Saturador 1"
 
-  PLUGIN_MANUFACTURER_CODE GOLK
-  PLUGIN_CODE SAT1
+  # IDs únicos para evitar colisión/caché en hosts (VST3 ClassID)
+  PLUGIN_MANUFACTURER_CODE G1K1
+  PLUGIN_CODE S7A1
 
   FORMATS VST3
 
@@ -80,5 +81,3 @@ target_link_libraries(PluginSaturador1 PRIVATE
   juce::juce_recommended_warning_flags
   juce::juce_recommended_lto_flags
 )
-
-
