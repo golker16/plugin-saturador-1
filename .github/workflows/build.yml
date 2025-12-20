@@ -3,8 +3,13 @@ name: build-vst3-windows
 on:
   push:
   pull_request:
+  workflow_dispatch:
   release:
     types: [published]
+
+concurrency:
+  group: build-vst3-windows-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   build:
@@ -14,18 +19,22 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Clean
+        shell: pwsh
+        run: |
+          if (Test-Path build) { Remove-Item -Recurse -Force build }
+          if (Test-Path dist)  { Remove-Item -Recurse -Force dist }
+
       - name: Configure (CMake)
         run: cmake -S . -B build -G "Visual Studio 17 2022" -A x64
 
       - name: Build (Release)
         run: cmake --build build --config Release --parallel
 
-      - name: Package VST3
+      - name: Locate VST3 bundle
         shell: pwsh
         run: |
-          New-Item -ItemType Directory -Force -Path dist | Out-Null
-
-          # Solo directorios .vst3 (bundle)
+          # Busca SOLO el bundle (directorio) que JUCE genera en ...\VST3\Nombre.vst3
           $bundles = Get-ChildItem -Path build -Recurse -Directory -Filter *.vst3 |
                      Where-Object { $_.FullName -match "\\VST3\\" }
 
@@ -35,20 +44,45 @@ jobs:
             exit 1
           }
 
+          # Si hay más de uno, toma el primero (normalmente solo hay uno)
+          $bundle = $bundles | Select-Object -First 1
+          Write-Host "Found bundle: $($bundle.FullName)"
+
+          # Verifica layout Windows VST3
+          $expected = Join-Path $bundle.FullName "Contents\x86_64-win"
+          if (-not (Test-Path $expected)) {
+            Write-Host "ERROR: Expected Windows VST3 layout not found: $expected"
+            Write-Host "Bundle tree:"
+            Get-ChildItem -Path $bundle.FullName -Recurse | Select-Object FullName
+            exit 1
+          }
+
+      - name: Package VST3
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+
+          $bundles = Get-ChildItem -Path build -Recurse -Directory -Filter *.vst3 |
+                     Where-Object { $_.FullName -match "\\VST3\\" }
+
           foreach ($b in $bundles) {
             $dest = Join-Path dist $b.Name
             if (Test-Path $dest) { Remove-Item -Recurse -Force $dest }
             Copy-Item -Recurse -Force $b.FullName $dest
           }
 
-          # Zip final
           $zipPath = "dist\vst3-windows.zip"
           if (Test-Path $zipPath) { Remove-Item -Force $zipPath }
           Compress-Archive -Path "dist\*.vst3" -DestinationPath $zipPath -Force
+
+          Write-Host "Packaged: $zipPath"
+          Get-ChildItem dist -Recurse | Select-Object FullName
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: vst3-windows
           path: dist/vst3-windows.zip
+          if-no-files-found: error
+
 
